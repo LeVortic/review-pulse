@@ -138,3 +138,7 @@ Do not use `--allow-unverified-artifacts` for report evidence.
 3. **Preserve the scope of the claim.** Current evidence uses one seed and a
    228-instance mixed-polarity subset. It supports the observed run, not a
    multi-seed uncertainty claim or a controlled cross-device speed comparison.
+4. **Preserve canonical label filtering.** Raw SemEval XML includes `conflict`
+   labels outside the three-class task. The initial FP16 verifier made for experimentation
+   exposed this by bypassing the split utility and failing with `KeyError: 'conflict'`; 
+   the fixed verifier now uses `split_official_data`, matching training and evaluation.

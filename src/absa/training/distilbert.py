@@ -4,7 +4,7 @@ from time import perf_counter
 
 import torch
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
 from ..config import ABSA_OUTPUTS_DIR
 from ..data.splits import split_official_data
@@ -43,7 +43,11 @@ def train_distilbert(
     max_length: int = 128,
     model_name: str = "distilbert-base-uncased",
     device: torch.device | None = None,
+    evaluate_official_test: bool = True,
+    class_weighting: str = "none",
+    warmup_ratio: float = 0.0,
 ):
+    """Train DistilBERT, selecting checkpoints only on development macro-F1."""
     validate_training_parameters(
         epochs=epochs,
         batch_size=batch_size,
@@ -59,6 +63,12 @@ def train_distilbert(
     model = ABSADistilBERT.from_pretrained_absa(model_name).to(active_device)
     model.config.id2label = dict(ID_TO_LABEL)
     model.config.label2id = dict(LABEL_TO_ID)
+    if class_weighting not in {"none", "sqrt_balanced", "balanced"}:
+        raise ValueError(
+            "class_weighting must be one of: none, sqrt_balanced, balanced"
+        )
+    if not 0 <= warmup_ratio < 1:
+        raise ValueError("warmup_ratio must be in [0, 1)")
     loader = DataLoader(
         AspectPairDataset(tokenizer, splits.train, max_length=max_length),
         batch_size=batch_size,
@@ -66,7 +76,27 @@ def train_distilbert(
         generator=loader_generator,
     )
     optimiser = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    loss_function = torch.nn.CrossEntropyLoss()
+    total_steps = epochs * len(loader)
+    scheduler = (
+        get_linear_schedule_with_warmup(
+            optimiser,
+            num_warmup_steps=int(total_steps * warmup_ratio),
+            num_training_steps=total_steps,
+        )
+        if warmup_ratio > 0
+        else None
+    )
+    class_weights = None
+    if class_weighting != "none":
+        counts = torch.bincount(
+            torch.tensor([LABEL_TO_ID[row.label] for row in splits.train]),
+            minlength=len(LABEL_TO_ID),
+        ).float()
+        class_weights = counts.sum() / (len(LABEL_TO_ID) * counts)
+        if class_weighting == "sqrt_balanced":
+            class_weights = class_weights.sqrt()
+        class_weights = class_weights.to(active_device)
+    loss_function = torch.nn.CrossEntropyLoss(weight=class_weights)
 
     inverse = {value: key for key, value in LABEL_TO_ID.items()}
 
@@ -98,6 +128,8 @@ def train_distilbert(
             loss = loss_function(model(**features).logits, labels)
             loss.backward()
             optimiser.step()
+            if scheduler is not None:
+                scheduler.step()
             epoch_loss += loss.detach().cpu().item()
         development = score(splits.development)
         history.append(
@@ -114,7 +146,11 @@ def train_distilbert(
 
     checkpoint.restore(model)
     development = score(splits.development)
-    test = score(splits.test)
+    test = (
+        score(splits.test)
+        if evaluate_official_test
+        else {"status": "not_evaluated_during_configuration_selection"}
+    )
     config = {
         "model": "distilbert",
         "pretrained_model": model_name,
@@ -128,6 +164,13 @@ def train_distilbert(
         "weight_decay": weight_decay,
         "patience": patience,
         "max_length": max_length,
+        "configuration_selection": "development_macro_f1_only",
+        "official_test_evaluated": evaluate_official_test,
+        "class_weighting": class_weighting,
+        "learning_rate_schedule": (
+            "linear_warmup_decay" if scheduler is not None else "constant"
+        ),
+        "warmup_ratio": warmup_ratio,
     }
     return model, tokenizer, build_run_result(
         development=development,

@@ -340,12 +340,47 @@ def test_distilbert_training_is_seeded_and_records_complete_run_config(monkeypat
         "weight_decay": 0.01,
         "patience": 1,
         "max_length": 16,
+        "configuration_selection": "development_macro_f1_only",
+        "official_test_evaluated": True,
+        "class_weighting": "none",
+        "learning_rate_schedule": "constant",
+        "warmup_ratio": 0.0,
     }
     output_dir = tmp_path / "distilbert"
     distilbert_training.save_artifact(first_model, _TinyTokenizer(), first, output_dir)
     run_record = json.loads((output_dir / "distilbert" / "training_run.json").read_text())
     assert run_record["config"] == first["config"]
     assert run_record["history"] == first["history"]
+
+
+def test_distilbert_configuration_selection_skips_official_test(monkeypatch) -> None:
+    train_rows, test_rows = _tiny_rows()
+    monkeypatch.setattr(distilbert_training, "AspectPairDataset", _TinyPairDataset)
+    monkeypatch.setattr(distilbert_training, "ABSADistilBERT", _TinyDistilBertFactory)
+    monkeypatch.setattr(
+        distilbert_training.AutoTokenizer,
+        "from_pretrained",
+        lambda _model_name: _TinyTokenizer(),
+    )
+
+    _model, _tokenizer, result = distilbert_training.train_distilbert(
+        train_rows,
+        test_rows,
+        epochs=1,
+        batch_size=2,
+        max_length=16,
+        model_name="tiny-distilbert",
+        device=torch.device("cpu"),
+        evaluate_official_test=False,
+    )
+
+    assert result["test"] == {
+        "status": "not_evaluated_during_configuration_selection"
+    }
+    assert result["config"]["official_test_evaluated"] is False
+    assert result["config"]["configuration_selection"] == (
+        "development_macro_f1_only"
+    )
 
 
 def test_distilbert_restores_early_winner_before_evaluation_and_saving(monkeypatch, tmp_path) -> None:
