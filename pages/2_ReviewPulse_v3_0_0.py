@@ -6,7 +6,7 @@ from src.absa.inference.api import predict_aspects
 from src.absa.inference.comparison import build_comparison
 from src.absa.inference.predictors import (
     ALL_MODEL_OPTIONS,
-    MODEL_OPTIONS,
+    COMPARISON_MODEL_OPTIONS,
     exposes_token_evidence,
 )
 from src.absa.interpretability.evidence import unsupported_evidence
@@ -37,8 +37,8 @@ if comparing:
     model_name = None
     model_exposes_evidence = False
     st.caption(
-        "Comparing the four core models on one review. GRU and Text CNN are "
-        "exploratory extensions and are not included."
+        "Comparing the four core models plus the 55 MB BERT-Small FP16 experiment. "
+        "GRU and Text CNN are not included."
     )
 else:
     model_name = st.selectbox(
@@ -93,7 +93,7 @@ if st.button(
             comparison = build_comparison(
                 review,
                 aspects.split(","),
-                list(MODEL_OPTIONS),
+                list(COMPARISON_MODEL_OPTIONS),
                 load_aspect_predictor,
                 gold=gold,
             )

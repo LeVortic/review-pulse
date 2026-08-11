@@ -30,6 +30,7 @@ MATRIX_COLUMNS: dict[str, str] = {
     "absa_target_gru": "GRU · review-only",
     "absa_text_cnn": "Text CNN · review-only",
     "absa_atae_lstm": "ATAE-LSTM · aspect",
+    "absa_bert_small_fp16": "BERT-Small FP16 · aspect",
     "absa_distilbert": "DistilBERT · aspect",
 }
 

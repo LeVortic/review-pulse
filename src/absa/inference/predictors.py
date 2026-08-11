@@ -4,7 +4,7 @@ from pathlib import Path
 
 import joblib
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from ..config import ABSA_OUTPUTS_DIR
 from ..interpretability.attention import align_attention
@@ -35,12 +35,20 @@ MODEL_OPTIONS = {
 OPTIONAL_MODEL_OPTIONS = {
     "absa_target_gru": "GRU review-only (exploratory)",
     "absa_text_cnn": "Text CNN review-only (exploratory)",
+    "absa_bert_small_fp16": "BERT-Small sentence-pair (FP16 experiment)",
 }
 ALL_MODEL_OPTIONS = {
     "absa_tfidf": MODEL_OPTIONS["absa_tfidf"],
     "absa_target_lstm": MODEL_OPTIONS["absa_target_lstm"],
     **OPTIONAL_MODEL_OPTIONS,
     "absa_atae_lstm": MODEL_OPTIONS["absa_atae_lstm"],
+    "absa_distilbert": MODEL_OPTIONS["absa_distilbert"],
+}
+COMPARISON_MODEL_OPTIONS = {
+    "absa_tfidf": MODEL_OPTIONS["absa_tfidf"],
+    "absa_target_lstm": MODEL_OPTIONS["absa_target_lstm"],
+    "absa_atae_lstm": MODEL_OPTIONS["absa_atae_lstm"],
+    "absa_bert_small_fp16": OPTIONAL_MODEL_OPTIONS["absa_bert_small_fp16"],
     "absa_distilbert": MODEL_OPTIONS["absa_distilbert"],
 }
 
@@ -51,7 +59,9 @@ ALL_MODEL_OPTIONS = {
 REVIEW_ONLY_MODELS = frozenset(
     {"absa_tfidf", "absa_target_lstm", "absa_target_gru", "absa_text_cnn"}
 )
-ASPECT_CONDITIONED_MODELS = frozenset({"absa_atae_lstm", "absa_distilbert"})
+ASPECT_CONDITIONED_MODELS = frozenset(
+    {"absa_atae_lstm", "absa_bert_small_fp16", "absa_distilbert"}
+)
 
 DISTILBERT_ARTIFACT_HINT = (
     "Obtain the complete v3 artifact from the GitHub repository with Git LFS: "
@@ -242,6 +252,44 @@ class DistilBertAspectPredictor:
         return _payload(aspect, logits, model_name, evidence)
 
 
+class BertSmallFp16AspectPredictor:
+    """Adapter for the compressed domain-adapted BERT-Small experiment."""
+
+    def __init__(
+        self,
+        path: Path = ABSA_OUTPUTS_DIR / "domain_bert_small_fp16",
+    ) -> None:
+        path = Path(path)
+        if not path.is_dir():
+            raise FileNotFoundError(
+                f"Missing v3 BERT-Small FP16 artifact directory: {path}"
+            )
+        self.tokenizer = AutoTokenizer.from_pretrained(path, local_files_only=True)
+        # The on-disk weights remain FP16 (~55 MB). Upcast in memory because CPU
+        # oneDNN does not universally support the FP16 backward pass required by
+        # gradient × input attribution.
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            path,
+            local_files_only=True,
+        ).float()
+        self.model.eval()
+
+    def predict(self, review: str, aspect: str, model_name: str) -> dict:
+        logits, tokens = gradient_x_input_attribution(
+            self.model,
+            self.tokenizer,
+            review,
+            aspect,
+        )
+        evidence = supported_evidence(
+            aspect=aspect,
+            method=ATTRIBUTION_METHOD,
+            tokens=tokens,
+            limitations=ATTRIBUTION_LIMITATIONS,
+        )
+        return _payload(aspect, logits, model_name, evidence)
+
+
 def get_predictor(model_name: str):
     """Load an explicitly supported predictor, or fail with a controlled message."""
     predictors = {
@@ -250,6 +298,7 @@ def get_predictor(model_name: str):
         "absa_target_gru": TargetGruAspectPredictor,
         "absa_text_cnn": TextCnnAspectPredictor,
         "absa_atae_lstm": AtaeLstmAspectPredictor,
+        "absa_bert_small_fp16": BertSmallFp16AspectPredictor,
         "absa_distilbert": DistilBertAspectPredictor,
     }
     try:

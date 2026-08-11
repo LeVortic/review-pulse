@@ -2,9 +2,12 @@ from pathlib import Path
 
 import pytest
 
+from src.absa.inference import predictors
 from src.absa.inference.api import predict_aspects
 from src.absa.inference.predictors import (
     ALL_MODEL_OPTIONS,
+    BertSmallFp16AspectPredictor,
+    COMPARISON_MODEL_OPTIONS,
     DistilBertAspectPredictor,
     MODEL_OPTIONS,
     OPTIONAL_MODEL_OPTIONS,
@@ -36,12 +39,21 @@ def test_predictor_registry_rejects_unknown_model_without_loading_an_artifact():
     assert "absa_atae_lstm" in MODEL_OPTIONS
     assert "absa_target_gru" in OPTIONAL_MODEL_OPTIONS
     assert "absa_text_cnn" in OPTIONAL_MODEL_OPTIONS
+    assert "absa_bert_small_fp16" in OPTIONAL_MODEL_OPTIONS
     assert list(ALL_MODEL_OPTIONS) == [
         "absa_tfidf",
         "absa_target_lstm",
         "absa_target_gru",
         "absa_text_cnn",
+        "absa_bert_small_fp16",
         "absa_atae_lstm",
+        "absa_distilbert",
+    ]
+    assert list(COMPARISON_MODEL_OPTIONS) == [
+        "absa_tfidf",
+        "absa_target_lstm",
+        "absa_atae_lstm",
+        "absa_bert_small_fp16",
         "absa_distilbert",
     ]
     try:
@@ -64,8 +76,50 @@ def test_distilbert_predictor_reports_missing_local_artifact(tmp_path: Path) -> 
     assert "quickstart.md#path-b---run-all-six-v3-models-from-github" in message
 
 
-def test_v3_page_uses_the_explicit_six_model_registry():
+def test_bert_small_predictor_reports_missing_local_artifact(tmp_path: Path) -> None:
+    missing = tmp_path / "domain_bert_small_fp16"
+
+    with pytest.raises(FileNotFoundError, match="BERT-Small FP16"):
+        BertSmallFp16AspectPredictor(missing)
+
+
+def test_bert_small_predictor_upcasts_fp16_artifact_for_cpu_attribution(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    class _Model:
+        float_called = False
+        eval_called = False
+
+        def float(self):
+            self.float_called = True
+            return self
+
+        def eval(self):
+            self.eval_called = True
+            return self
+
+    model = _Model()
+    monkeypatch.setattr(
+        predictors.AutoTokenizer,
+        "from_pretrained",
+        lambda path, local_files_only: object(),
+    )
+    monkeypatch.setattr(
+        predictors.AutoModelForSequenceClassification,
+        "from_pretrained",
+        lambda path, local_files_only: model,
+    )
+
+    loaded = BertSmallFp16AspectPredictor(tmp_path)
+
+    assert loaded.model is model
+    assert model.float_called is True
+    assert model.eval_called is True
+
+
+def test_v3_page_uses_explicit_selection_and_comparison_registries():
     page = Path("pages/2_ReviewPulse_v3_0_0.py").read_text()
     assert "ALL_MODEL_OPTIONS" in page
+    assert "COMPARISON_MODEL_OPTIONS" in page
     assert "OPTIONAL_MODEL_OPTIONS" not in page
-    assert "do not support token evidence" in page

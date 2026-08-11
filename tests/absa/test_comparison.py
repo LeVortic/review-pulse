@@ -39,7 +39,11 @@ def _factory(overrides: dict | None = None):
     def _get(model_name: str):
         if model_name in overrides:
             raise overrides[model_name]
-        if model_name in {"absa_atae_lstm", "absa_distilbert"}:
+        if model_name in {
+            "absa_atae_lstm",
+            "absa_bert_small_fp16",
+            "absa_distilbert",
+        }:
             return _AspectAwareFake()
         return _ReviewOnlyFake()
 
@@ -55,7 +59,7 @@ def test_matrix_is_aspects_by_models():
     comparison = build_comparison(REVIEW, ASPECTS, CORE_MODELS, _factory())
     assert list(comparison.display.index) == ASPECTS
     assert list(comparison.display.columns) == [MATRIX_COLUMNS[name] for name in CORE_MODELS]
-    assert comparison.display.shape == (2, 4)
+    assert comparison.display.shape == (2, len(CORE_MODELS))
     assert comparison.labels.shape == comparison.display.shape
 
 
@@ -91,7 +95,7 @@ def test_every_artifact_error_type_becomes_a_sentinel(error):
 def test_all_models_missing_still_returns_a_full_shaped_matrix():
     factory = _factory({name: FileNotFoundError("gone") for name in CORE_MODELS})
     comparison = build_comparison(REVIEW, ASPECTS, CORE_MODELS, factory)
-    assert comparison.display.shape == (2, 4)
+    assert comparison.display.shape == (2, len(CORE_MODELS))
     assert (comparison.display == ARTIFACT_MISSING).all().all()
 
 
@@ -187,5 +191,9 @@ def test_every_model_has_a_matrix_column_name():
 def test_matrix_headers_keep_the_review_only_distinction():
     for model_name in ("absa_tfidf", "absa_target_lstm"):
         assert "review-only" in MATRIX_COLUMNS[model_name]
-    for model_name in ("absa_atae_lstm", "absa_distilbert"):
+    for model_name in (
+        "absa_atae_lstm",
+        "absa_bert_small_fp16",
+        "absa_distilbert",
+    ):
         assert "aspect" in MATRIX_COLUMNS[model_name]

@@ -127,3 +127,21 @@ def test_distilbert_predictor_returns_attribution_payload(monkeypatch):
     assert result["label"] == "positive"
     assert result["token_evidence"]["status"] == "supported"
     assert result["token_evidence"]["method"] == ATTRIBUTION_METHOD
+
+
+def test_bert_small_predictor_returns_attribution_payload(monkeypatch):
+    predictor = object.__new__(predictors.BertSmallFp16AspectPredictor)
+    predictor.model = object()
+    predictor.tokenizer = object()
+    monkeypatch.setattr(
+        predictors,
+        "gradient_x_input_attribution",
+        lambda *_args: (
+            torch.tensor([[0.1, 0.2, 0.7]]),
+            [{"token": "Great", "start": 0, "end": 5, "score": 1.0}],
+        ),
+    )
+    result = predictor.predict("Great food", "food", "absa_bert_small_fp16")
+    assert result["label"] == "positive"
+    assert result["token_evidence"]["status"] == "supported"
+    assert result["token_evidence"]["method"] == ATTRIBUTION_METHOD
